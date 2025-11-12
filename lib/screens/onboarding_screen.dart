@@ -5,9 +5,15 @@ import 'package:bloom/services/cycle_service.dart';
 import 'package:flutter/material.dart';
 import 'package:bloom/l10n/app_localizations.dart';
 import 'package:introduction_screen/introduction_screen.dart';
+import 'package:lottie/lottie.dart';
 import 'package:numberpicker/numberpicker.dart';
 
 import '../navigation/app_router.dart';
+
+// --- ИЗМЕНЕНИЕ: Импортируем новые сервисы ---
+import 'package:bloom/services/firestore_service.dart';
+import 'package:bloom/services/settings_service.dart';
+// ---
 
 class OnboardingScreen extends StatefulWidget {
   final Function(Locale) onLocaleChanged;
@@ -22,27 +28,44 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
+  // --- ИЗМЕНЕНИЕ: Добавляем новые сервисы ---
   final CycleService _cycleService = CycleService();
+  final SettingsService _settingsService = SettingsService();
+  final FirestoreService _firestoreService = FirestoreService();
+  // ---
 
   int _avgCycleLength = 28;
+  int _avgPeriodLength = 5;
   DateTime? _lastPeriodStart;
 
+  // --- ИЗМЕНЕНИЕ: Обновлен _onDone ---
   void _onDone() async {
-    await _cycleService.saveManualAvgCycleLength(_avgCycleLength);
+    // 1. Сохраняем настройки в SettingsService (он сам их бэкапит)
+    await _settingsService.saveManualAvgCycleLength(_avgCycleLength);
+    await _settingsService.saveManualAvgPeriodLength(_avgPeriodLength);
 
+    // 2. Сохраняем дни цикла в CycleService
     if (_lastPeriodStart != null) {
-      await _cycleService.savePeriodDays([_lastPeriodStart!]);
+      final daysToSave = List.generate(
+          _avgPeriodLength,
+              (index) => _lastPeriodStart!.add(Duration(days: index))
+      );
+      await _cycleService.savePeriodDays(daysToSave);
+      // TODO: Мы должны забэкапить эти дни, как только
+      // cycle_service будет готов к миграции
     }
 
-    await _cycleService.setOnboardingComplete();
+    // 3. Отмечаем онбординг пройденным (в Firestore)
+    await _firestoreService.setOnboardingCompleteInCloud();
 
     if (mounted) {
-      // 2. ИСПОЛЬЗУЕМ ПЕРЕХОД ПО ИМЕНИ
       Navigator.of(context).pushReplacementNamed(AppRouter.home);
     }
   }
+  // ---
 
   Future<void> _pickLastPeriodDate(BuildContext context) async {
+    // ... (без изменений) ...
     final date = await showDatePicker(
       context: context,
       initialDate: DateTime.now(),
@@ -58,13 +81,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
   @override
   Widget build(BuildContext context) {
-    // ... (весь остальной код build() остается БЕЗ ИЗМЕНЕНИЙ) ...
+    // ... (UI без изменений) ...
     final l10n = AppLocalizations.of(context)!;
 
-    const pageDecoration = PageDecoration(
-      titleTextStyle: TextStyle(fontSize: 28.0, fontWeight: FontWeight.bold, color: Colors.black87),
-      bodyTextStyle: TextStyle(fontSize: 19.0, color: Colors.black54),
-      bodyPadding: EdgeInsets.all(16.0),
+    final baseTextStyle = Theme.of(context).textTheme.bodyLarge ?? const TextStyle(fontSize: 19.0, color: Colors.black54);
+    final titleTextStyle = Theme.of(context).textTheme.headlineMedium ?? const TextStyle(fontSize: 28.0, fontWeight: FontWeight.bold, color: Colors.black87);
+
+    final pageDecoration = PageDecoration(
+      titleTextStyle: titleTextStyle,
+      bodyTextStyle: baseTextStyle,
+      bodyPadding: const EdgeInsets.all(16.0),
       imagePadding: EdgeInsets.zero,
     );
 
@@ -73,8 +99,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         PageViewModel(
           title: l10n.welcomeTitle,
           body: l10n.welcomeDesc,
-          image: const Center(
-            child: Icon(Icons.auto_stories_rounded, size: 100, color: Colors.pinkAccent),
+          image: Center(
+            child: Lottie.asset(
+              'assets/lottie/avatar_welcome.json',
+              width: 250,
+              height: 250,
+            ),
           ),
           decoration: pageDecoration,
         ),
@@ -89,8 +119,36 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     : "${_lastPeriodStart!.day}.${_lastPeriodStart!.month}.${_lastPeriodStart!.year}"
             ),
           ),
-          image: const Center(
-            child: Icon(Icons.calendar_month_outlined, size: 100, color: Colors.pinkAccent),
+          image: Center(
+            child: Lottie.asset(
+              'assets/lottie/avatar_follicular.json',
+              width: 250,
+              height: 250,
+            ),
+          ),
+          decoration: pageDecoration,
+        ),
+        PageViewModel(
+          title: l10n.questionPeriodLengthTitle,
+          body: l10n.questionPeriodLengthDesc,
+          footer: NumberPicker(
+            value: _avgPeriodLength,
+            minValue: 2,
+            maxValue: 10,
+            step: 1,
+            axis: Axis.horizontal,
+            onChanged: (value) {
+              setState(() {
+                _avgPeriodLength = value;
+              });
+            },
+          ),
+          image: Center(
+            child: Lottie.asset(
+              'assets/lottie/avatar_sleep.json',
+              width: 250,
+              height: 250,
+            ),
           ),
           decoration: pageDecoration,
         ),
@@ -109,8 +167,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               });
             },
           ),
-          image: const Center(
-            child: Icon(Icons.sync_rounded, size: 100, color: Colors.pinkAccent),
+          image: Center(
+            child: Lottie.asset(
+              'assets/lottie/avatar_luteal.json',
+              width: 250,
+              height: 250,
+            ),
           ),
           decoration: pageDecoration,
         ),

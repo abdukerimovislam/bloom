@@ -1,82 +1,120 @@
 // Файл: lib/widgets/insight_card.dart
 
+import 'package:bloom/l10n/app_localizations.dart';
 import 'package:bloom/models/cycle_phase.dart';
 import 'package:flutter/material.dart';
-import 'package:bloom/l10n/app_localizations.dart';
 
 class InsightCard extends StatelessWidget {
   final CyclePhase currentPhase;
+  final Set<String> todaySymptoms;
+  // --- ИЗМЕНЕНИЕ: Добавляем флаг ---
+  final bool isPillTrackerEnabled;
+  // ---
 
-  const InsightCard({super.key, required this.currentPhase});
+  const InsightCard({
+    super.key,
+    required this.currentPhase,
+    required this.todaySymptoms,
+    // --- ИЗМЕНЕНИЕ: Добавляем в конструктор ---
+    required this.isPillTrackerEnabled,
+    // ---
+  });
+
+  String _getInsight(AppLocalizations l10n) {
+
+    // --- ИЗМЕНЕНИЕ: Логика для таблеток (Баг №1) ---
+    if (isPillTrackerEnabled) {
+      if (currentPhase == CyclePhase.menstruation) {
+        // 'menstruation' - это наша симуляция "недели плацебо"
+        return l10n.insightPillPlacebo;
+      } else {
+        // Все остальное (follicular/luteal) - это "активные таблетки"
+        return l10n.insightPillActive;
+      }
+    }
+    // ---
+
+    // (Остальная логика для естественного цикла без изменений)
+    if (currentPhase == CyclePhase.menstruation) {
+      if (todaySymptoms.contains('symptomCramps')) {
+        return l10n.insightMenstruation_2;
+      }
+      if (todaySymptoms.contains('moodSad')) {
+        return l10n.insightMenstruation_3;
+      }
+      return l10n.insightMenstruation_1;
+    }
+
+    if (currentPhase == CyclePhase.follicular) {
+      if (todaySymptoms.contains('moodHappy')) {
+        return l10n.insightFollicular_3;
+      }
+      return l10n.insightFollicular_1;
+    }
+
+    if (currentPhase == CyclePhase.ovulation) {
+      if (todaySymptoms.contains('moodHappy')) {
+        return l10n.insightOvulation_1;
+      }
+      return l10n.insightOvulation_2;
+    }
+
+    if (currentPhase == CyclePhase.luteal) {
+      if (todaySymptoms.contains('moodIrritable')) {
+        return l10n.insightLuteal_1;
+      }
+      if (todaySymptoms.contains('symptomHeadache')) {
+        return l10n.insightLuteal_3;
+      }
+      return l10n.insightLuteal_2;
+    }
+
+    if (currentPhase == CyclePhase.delayed) {
+      return l10n.insightDelayed_1;
+    }
+
+    return l10n.insightNone;
+  }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
 
-    // --- 💡 НОВАЯ ЛОГИКА ВЫБОРА СОВЕТА 💡 ---
+    final String insightText = _getInsight(l10n);
 
-    // 1. Создаем "карту" (Map), где ключ - это фаза,
-    //    а значение - это список "функций",
-    //    которые возвращают нашу локализованную строку.
-    final Map<CyclePhase, List<String Function()>> insightMap = {
-
-      CyclePhase.menstruation: [
-            () => l10n.insightMenstruation_1,
-            () => l10n.insightMenstruation_2,
-            () => l10n.insightMenstruation_3,
-      ],
-      CyclePhase.follicular: [
-            () => l10n.insightFollicular_1,
-            () => l10n.insightFollicular_2,
-            () => l10n.insightFollicular_3,
-      ],
-      CyclePhase.ovulation: [
-            () => l10n.insightOvulation_1,
-            () => l10n.insightOvulation_2,
-            () => l10n.insightOvulation_3,
-      ],
-      CyclePhase.luteal: [
-            () => l10n.insightLuteal_1,
-            () => l10n.insightLuteal_2,
-            () => l10n.insightLuteal_3,
-      ],
-      CyclePhase.delayed: [
-            () => l10n.insightDelayed_1,
-            () => l10n.insightDelayed_2,
-            () => l10n.insightDelayed_3,
-      ],
-      CyclePhase.none: [
-            () => l10n.insightNone,
-      ],
-    };
-
-    // 2. Получаем список советов для ТЕКУЩЕЙ фазы
-    final insightsForCurrentPhase = insightMap[currentPhase] ?? [() => l10n.insightNone];
-
-    // 3. Получаем "сегодняшний" день (например, 23)
-    final int dayOfMonth = DateTime.now().day;
-
-    // 4. Используем "магию" (деление с остатком),
-    //    чтобы получить индекс для выбора совета.
-    //    (Например, 23 % 3 = 2. Мы выберем совет №2)
-    final int dailyIndex = dayOfMonth % insightsForCurrentPhase.length;
-
-    // 5. Выбираем и "вызываем" функцию, чтобы получить текст
-    final String insightText = insightsForCurrentPhase[dailyIndex]();
-
-    // --- 💡 КОНЕЦ ЛОГИКИ 💡 ---
+    // НЕ показываем, если данных нет (insightNone)
+    if (insightText == l10n.insightNone) {
+      return const SizedBox.shrink();
+    }
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16.0),
+      elevation: 0,
+      color: theme.colorScheme.primaryContainer.withOpacity(0.4),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Text(
-          insightText,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            color: Colors.black87,
-            height: 1.5,
-          ),
-          textAlign: TextAlign.center,
+        child: Row(
+          children: [
+            Icon(
+              Icons.lightbulb_outline_rounded,
+              size: 30,
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                insightText,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onPrimaryContainer,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

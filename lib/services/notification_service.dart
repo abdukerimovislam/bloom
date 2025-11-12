@@ -1,137 +1,237 @@
 // Файл: lib/services/notification_service.dart
 
-import 'package:bloom/models/cycle_prediction.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:bloom/l10n/app_localizations.dart';
+import 'package:bloom/models/cycle_prediction.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+import 'package:bloom/services/pill_service.dart';
+
+const String _pillCategoryId = 'PILL_CATEGORY';
+const String _pillTakenActionId = 'PILL_TAKEN_ACTION';
+
+@pragma('vm:entry-point')
+void notificationTapBackground(NotificationResponse notificationResponse) async {
+  if (notificationResponse.actionId == _pillTakenActionId) {
+    WidgetsFlutterBinding.ensureInitialized();
+    final PillService pillService = PillService();
+    // --- ИСПРАВЛЕНИЕ: Используем payload ---
+    if (notificationResponse.payload != null && notificationResponse.payload!.isNotEmpty) {
+      await pillService.savePillTaken(DateTime.parse(notificationResponse.payload!));
+    } else {
+      await pillService.savePillTaken(DateTime.now()); // Запасной вариант
+    }
+    // ---
+  }
+}
 
 class NotificationService {
-  // Синглтон (чтобы у нас был только один экземпляр сервиса)
-  static final NotificationService _instance = NotificationService._internal();
-  factory NotificationService() => _instance;
-  NotificationService._internal();
-
-  final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin =
+  static final FlutterLocalNotificationsPlugin _flutterLocalNotificationsPlugin =
   FlutterLocalNotificationsPlugin();
 
-  /// 1. Инициализация базы данных часовых поясов
   static Future<void> initTimezones() async {
     tz.initializeTimeZones();
-    tz.setLocalLocation(tz.getLocation('UTC')); // Установим по умолчанию
     try {
-      // Пытаемся установить локальный часовой пояс
-      final String localTimezone = tz.local.name;
-      tz.setLocalLocation(tz.getLocation(localTimezone));
+      tz.setLocalLocation(tz.getLocation('Asia/Bishkek'));
     } catch (e) {
-      print('Could not set local timezone: $e');
+      tz.setLocalLocation(tz.UTC);
     }
   }
 
-  /// 2. Инициализация самого плагина (запрос разрешений)
   static Future<void> init() async {
-    final service = NotificationService();
 
-    // Настройки для Android
+    final DarwinNotificationCategory pillCategory = DarwinNotificationCategory(
+      _pillCategoryId,
+      actions: <DarwinNotificationAction>[
+        DarwinNotificationAction.plain(
+          _pillTakenActionId,
+          'Mark as Taken',
+          options: {DarwinNotificationActionOption.authenticationRequired},
+        ),
+      ],
+    );
+    final List<DarwinNotificationCategory> categories = [pillCategory];
+
     const AndroidInitializationSettings initializationSettingsAndroid =
-    AndroidInitializationSettings('@mipmap/ic_launcher'); // Иконка приложения
+    AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    // Настройки для iOS
-    const DarwinInitializationSettings initializationSettingsIOS =
+    final DarwinInitializationSettings initializationSettingsIOS =
     DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
+      notificationCategories: categories,
     );
 
-    const InitializationSettings initializationSettings =
+    final InitializationSettings initializationSettings =
     InitializationSettings(
       android: initializationSettingsAndroid,
       iOS: initializationSettingsIOS,
     );
 
-    await service._flutterLocalNotificationsPlugin.initialize(
+    await _flutterLocalNotificationsPlugin.initialize(
       initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) async {
+        if (response.actionId == _pillTakenActionId) {
+          final PillService pillService = PillService();
+          // --- ИСПРАВЛЕНИЕ: Используем payload ---
+          if (response.payload != null && response.payload!.isNotEmpty) {
+            await pillService.savePillTaken(DateTime.parse(response.payload!));
+          } else {
+            await pillService.savePillTaken(DateTime.now()); // Запасной вариант
+          }
+          // ---
+        }
+      },
+      onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
     );
 
-    // Запрос разрешений (особенно важно для Android 13+)
-    service._flutterLocalNotificationsPlugin
+    // --- ИЗМЕНЕНИЕ: ЗАПРАШИВАЕМ РАЗРЕШЕНИЕ НА "БУДИЛЬНИКИ" ---
+    final androidImplementation = _flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+        AndroidFlutterLocalNotificationsPlugin>();
 
-    // Запрос разрешений (iOS)
-    service._flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<
-        IOSFlutterLocalNotificationsPlugin>()
-        ?.requestPermissions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+    // Запрашиваем разрешение, если оно нужно (API 31+)
+    await androidImplementation?.requestExactAlarmsPermission();
+    // ---
   }
 
-  /// 3. Планирование уведомлений
+  static const AndroidNotificationDetails _androidNotificationDetails =
+  AndroidNotificationDetails(
+    'bloom_channel_id',
+    'Bloom Notifications',
+    channelDescription: 'Channel for Bloom app notifications',
+    importance: Importance.max,
+    priority: Priority.high,
+    showWhen: false,
+  );
+
+  static const NotificationDetails _platformChannelInfo =
+  NotificationDetails(android: _androidNotificationDetails);
+
+  static Future<void> cancelAllNotifications() async {
+    await _flutterLocalNotificationsPlugin.cancelAll();
+  }
+
+  static const int _periodPredictionId = 0;
+  static const int _fertilePredictionId = 1;
+
+  static Future<void> cancelPredictionNotifications() async {
+    await _flutterLocalNotificationsPlugin.cancel(_periodPredictionId);
+    await _flutterLocalNotificationsPlugin.cancel(_fertilePredictionId);
+  }
+
   static Future<void> schedulePredictionNotifications(
       CyclePrediction prediction, AppLocalizations l10n) async {
 
-    final service = NotificationService();
+    await cancelPredictionNotifications();
+    final now = tz.TZDateTime.now(tz.local);
 
-    // Сначала отменяем ВСЕ старые, чтобы не было дублей
-    await NotificationService.cancelAllNotifications();
+    final dtPeriod = prediction.nextPeriodStartDate.subtract(const Duration(days: 2));
+    final nextPeriodTime = tz.TZDateTime(
+        tz.local, dtPeriod.year, dtPeriod.month, dtPeriod.day, 12);
 
-    // Настройки для Android (канал)
-    const AndroidNotificationDetails androidDetails =
-    AndroidNotificationDetails(
-      'bloom_cycle_channel',
-      'Cycle Predictions',
-      channelDescription: 'Notifications about cycle predictions',
-      importance: Importance.max,
-      priority: Priority.high,
-      ticker: 'ticker',
-    );
-    const NotificationDetails platformDetails =
-    NotificationDetails(android: androidDetails);
-
-    // --- A. Уведомление о НАЧАЛЕ ЦИКЛА (за 2 дня) ---
-    final DateTime periodScheduleTime =
-    prediction.nextPeriodStartDate.subtract(const Duration(days: 2));
-
-    // Убедимся, что дата в будущем
-    if (periodScheduleTime.isAfter(DateTime.now())) {
-      await service._flutterLocalNotificationsPlugin.zonedSchedule(
-        0, // id = 0 (для цикла)
+    if (nextPeriodTime.isAfter(now)) {
+      await _flutterLocalNotificationsPlugin.zonedSchedule(
+        _periodPredictionId,
         l10n.notificationPeriodTitle,
-        l10n.notificationPeriodBody(2), // "{days} дня"
-        tz.TZDateTime.from(periodScheduleTime, tz.local), // Используем часовой пояс
-        platformDetails,
+        l10n.notificationPeriodBody(2),
+        nextPeriodTime,
+        _platformChannelInfo,
         uiLocalNotificationDateInterpretation:
         UILocalNotificationDateInterpretation.absoluteTime,
-        androidAllowWhileIdle: true,
+        matchDateTimeComponents: DateTimeComponents.dateAndTime,
       );
     }
 
-    // --- B. Уведомление о ФЕРТИЛЬНОСТИ (за 1 день) ---
-    final DateTime fertileScheduleTime =
-    prediction.fertileWindowStart.subtract(const Duration(days: 1));
+    final dtFertile = prediction.fertileWindowStart.subtract(const Duration(days: 1));
+    final nextFertileTime = tz.TZDateTime(
+        tz.local, dtFertile.year, dtFertile.month, dtFertile.day, 12);
 
-    // Убедимся, что дата в будущем
-    if (fertileScheduleTime.isAfter(DateTime.now())) {
-      await service._flutterLocalNotificationsPlugin.zonedSchedule(
-        1, // id = 1 (для фертильности)
+    if (nextFertileTime.isAfter(now)) {
+      await _flutterLocalNotificationsPlugin.zonedSchedule(
+        _fertilePredictionId,
         l10n.notificationFertileTitle,
         l10n.notificationFertileBody,
-        tz.TZDateTime.from(fertileScheduleTime, tz.local),
-        platformDetails,
+        nextFertileTime,
+        _platformChannelInfo,
         uiLocalNotificationDateInterpretation:
         UILocalNotificationDateInterpretation.absoluteTime,
-        androidAllowWhileIdle: true,
+        matchDateTimeComponents: DateTimeComponents.dateAndTime,
       );
     }
   }
 
-  /// 4. Отмена всех уведомлений
-  static Future<void> cancelAllNotifications() async {
-    await NotificationService()._flutterLocalNotificationsPlugin.cancelAll();
+  static const int _pillReminderStartId = 10;
+
+  static Future<void> cancelPillReminders() async {
+    for (int i = 0; i < 28; i++) {
+      await _flutterLocalNotificationsPlugin.cancel(_pillReminderStartId + i);
+    }
+  }
+
+  static Future<void> schedulePillReminder({
+    required TimeOfDay time,
+    required AppLocalizations l10n,
+    required DateTime packStartDate,
+    required int activeDays,
+  }) async {
+    await cancelPillReminders();
+
+    final AndroidNotificationDetails pillAndroidDetails =
+    AndroidNotificationDetails(
+      'bloom_pill_channel',
+      'Pill Reminders',
+      channelDescription: 'Reminders to take your contraceptive pill.',
+      importance: Importance.max,
+      priority: Priority.high,
+      actions: <AndroidNotificationAction>[
+        AndroidNotificationAction(
+          _pillTakenActionId,
+          l10n.notificationPillActionTaken,
+        ),
+      ],
+    );
+
+    final NotificationDetails pillPlatformChannelInfo = NotificationDetails(
+      android: pillAndroidDetails,
+      iOS: const DarwinNotificationDetails(
+        categoryIdentifier: _pillCategoryId,
+      ),
+    );
+
+    final now = tz.TZDateTime.now(tz.local);
+
+    for (int i = 0; i < activeDays; i++) {
+      final dayToSchedule = packStartDate.add(Duration(days: i));
+
+      tz.TZDateTime scheduledTime = tz.TZDateTime(
+        tz.local,
+        dayToSchedule.year,
+        dayToSchedule.month,
+        dayToSchedule.day,
+        time.hour,
+        time.minute,
+      );
+
+      if (scheduledTime.isBefore(now)) {
+        continue;
+      }
+
+      await _flutterLocalNotificationsPlugin.zonedSchedule(
+        _pillReminderStartId + i,
+        l10n.notificationPillTitle,
+        l10n.notificationPillBody,
+        scheduledTime,
+        pillPlatformChannelInfo,
+        // --- ИСПРАВЛЕНИЕ: Отправляем payload (Баг №2) ---
+        payload: dayToSchedule.toIso8601String(),
+        // ---
+        uiLocalNotificationDateInterpretation:
+        UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.dateAndTime,
+      );
+    }
   }
 }

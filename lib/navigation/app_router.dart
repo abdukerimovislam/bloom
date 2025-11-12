@@ -1,70 +1,68 @@
 // Файл: lib/navigation/app_router.dart
 
-import 'package:bloom/main.dart'; // Нужен для HomeScreen
+import 'package:bloom/main.dart';
 import 'package:bloom/screens/onboarding_screen.dart';
 import 'package:bloom/screens/settings_screen.dart';
-import 'package:bloom/themes/app_themes.dart'; // Нужен для AppTheme
 import 'package:flutter/material.dart';
-import 'package:page_transition/page_transition.dart';
+
+// --- ИЗМЕНЕНИЕ: Импорт новых экранов ---
+import 'package:bloom/screens/auth_gate.dart';
+import 'package:bloom/screens/auth_screen.dart';
+// ---
+
+// --- ИЗМЕНЕНИЕ: Импорт AppTheme ---
+import 'package:bloom/themes/app_themes.dart';
+// ---
 
 class AppRouter {
-  // Имена маршрутов
   static const String home = '/';
   static const String onboarding = '/onboarding';
   static const String settings = '/settings';
+  // --- ИЗМЕНЕНИЕ: Новые роуты ---
+  static const String auth = '/auth';
+  static const String authGate = '/authGate';
+  // ---
 
-  static Route<dynamic> generateRoute(RouteSettings routeSettings, {
-    // Функции, которые передаются из MyApp
-    required bool showOnboarding,
-    required Function(Locale) onLocaleChanged,
-    required Function(AppTheme) onThemeChanged, // Добавлено
-  }) {
+  static Route<dynamic> generateRoute(
+      RouteSettings routeSettings, {
+        // --- ИЗМЕНЕНИЕ: Убрали 'showOnboarding' ---
+        // required bool showOnboarding,
+        // ---
+        required Function(Locale) onLocaleChanged,
+        required Function(AppTheme) onThemeChanged,
+      }) {
+    final Map<String, dynamic>? args = routeSettings.arguments as Map<String, dynamic>?;
+
     switch (routeSettings.name) {
+    // --- ИЗМЕНЕНИЕ: Добавляем новые экраны ---
+      case authGate:
+        return MaterialPageRoute(builder: (_) => const AuthGate());
+      case auth:
+        return MaterialPageRoute(builder: (_) => const AuthScreen());
+    // ---
 
       case home:
         return MaterialPageRoute(
-          // Передаем обе функции в HomeScreen
           builder: (_) => HomeScreen(
             onLocaleChanged: onLocaleChanged,
-            onThemeChanged: onThemeChanged, // Добавлено
+            onThemeChanged: onThemeChanged,
           ),
         );
-
       case onboarding:
         return MaterialPageRoute(
-          // OnboardingScreen тоже нужна функция смены языка
-          // (хотя он не может ее вызвать, она нужна для перехода на HomeScreen)
-          builder: (_) => OnboardingScreen(onLocaleChanged: onLocaleChanged),
+          builder: (_) => OnboardingScreen(
+            onLocaleChanged: onLocaleChanged,
+          ),
         );
-
       case settings:
-      // --- Извлекаем аргументы ---
-      // Аргументы передаются через Navigator.pushNamed()
-        final args = routeSettings.arguments as Map<String, dynamic>?;
-
-        // Используем функции из аргументов, если они есть,
-        // иначе используем функции, переданные из MyApp (как fallback)
-        final langChanged = args?['onLanguageChanged'] as Function(Locale)? ?? onLocaleChanged;
-        final themeChanged = args?['onThemeChanged'] as Function(AppTheme)? ?? onThemeChanged;
-
-        return PageTransition(
-          // Передаем извлеченные/fallback функции в SettingsScreen
-          child: SettingsScreen(
-            onLanguageChanged: langChanged,
-            onThemeChanged: themeChanged,
-          ),
-          type: PageTransitionType.fade,
-        );
-
-      default:
-      // Страница ошибки, если маршрут не найден
         return MaterialPageRoute(
-          builder: (_) => Scaffold(
-            body: Center(
-              child: Text('Error: No route defined for ${routeSettings.name}'),
-            ),
+          builder: (_) => SettingsScreen(
+            onLanguageChanged: args?['onLanguageChanged'] ?? onLocaleChanged,
+            onThemeChanged: args?['onThemeChanged'] ?? onThemeChanged,
           ),
         );
+      default:
+        return MaterialPageRoute(builder: (_) => const AuthGate()); // По умолчанию
     }
   }
 }
